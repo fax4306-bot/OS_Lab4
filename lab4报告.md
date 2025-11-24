@@ -96,7 +96,7 @@ do_fork是创建线程的主要函数。其功能是创建一个新的子进程�
   - 更新系统中进程数量`nr_process`
   - 将新建的进程设为就绪态：
 调用`wakeup_proc(proc)`将新进程的状态设置为`PROC_RUNNABLE`，使其可以被调度器选中。
-  - 将新进程的pid设为`do_fork`函数返回值
+  - 将新进程的`pid`设为`do_fork`函数返回值
 - 代码实现
     ```c
     int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
