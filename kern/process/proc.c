@@ -92,7 +92,7 @@ alloc_proc(void)
     struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
     if (proc != NULL)
     {
-        // LAB4:EXERCISE1 YOUR CODE
+        // LAB4:EXERCISE1 2312123
         /*
          * 以下 proc_struct 中的字段需要被初始化：
          *       enum proc_state state;                      // 进程状态
@@ -198,7 +198,7 @@ void proc_run(struct proc_struct *proc)
 {
     if (proc != current)
     {
-        // LAB4:EXERCISE3 YOUR CODE
+        // LAB4:EXERCISE3 2313591
         /*
          * 一些有用的宏、函数和定义：
          *   local_intr_save():        禁用中断 (保护临界区)
@@ -358,7 +358,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
         goto fork_out;
     }
     ret = -E_NO_MEM;
-    // LAB4:EXERCISE2 YOUR CODE
+    // LAB4:EXERCISE2 2313715
     /*
      * 一些有用的宏、函数和定义：
      *   alloc_proc:   创建 proc 结构体并初始化字段 (lab4:exercise1)
