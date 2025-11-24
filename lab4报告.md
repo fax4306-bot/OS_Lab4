@@ -153,7 +153,7 @@ do_fork是创建线程的主要函数。其功能是创建一个新的子进程�
 
 每次调用函数时，last_pid会先自增一位，如果超过最大 PID，就从1开始重新循环，并进入inside处执行关键的while循环。这个while循环通过遍历`proc_list`链表，逐一比对`last_pid`与已有进程的 PID，如果发现冲突，说明该 PID 已经被占用。算法会将`last_pid`加 1（如果加1后超过`next_safe`或达到`MAX_PID`，就重置`next_safe`为`MAX_PID`，达到`MAX_PID`时还需要将`last_pid`置1），并跳转回 repeat 标签重新执行while循环开始整个链表的扫描。这确保了只要有冲突，就不会返回当前的`last_pid`。同时在遍历链表时，如果发现某个进程的 PID 大于当前的`last_pid`，代码会记录下这些大于`last_pid`的 PID 中最小的一个，赋值给`next_safe`。这意味着在 last_pid 到 next_safe 之间的这段整数区间内（不包含边界值），没有任何已存在的进程 PID。因此，下一次调用`get_pid`时，只要`++last_pid < next_safe`，就可以直接返回`last_pid`，而无需再次遍历整个链表。这在保证唯一性的同时提高了分配效率。
 
-由此可以分析出，ucore可以做到给每个新fork的线程一个唯一的id。理由在于算法会维护一个静态变量`next_safe`，记录当前已分配 PID 的安全上限。对于候选 PID 小于`next_safe`的情况，算法直接分配，不需要遍历整个进程列表；而候选 PID ≥ next_safe分配 PID 时，算法遍历当前所有进程的列表，一旦发现候选 PID 已存在，立即生成新候选值并重新检查，直到找到一个未被占用的值。并且开头使用了`static_assert(MAX_PID > MAX_PROCESS)`，保证了 PID 的总空间大于系统允许的最大进程数，因此在逻辑上一定能找到一个空闲的 PID，不会出现死循环。
+由此可以分析出，ucore可以做到给每个新fork的线程一个唯一的id。理由在于算法会维护一个静态变量`next_safe`，记录当前已分配 PID 的安全上限。对于候选 PID 小于`next_safe`的情况，算法直接分配，不需要遍历整个进程列表；而候选 PID ≥`next_safe`分配 PID 时，算法遍历当前所有进程的列表，一旦发现候选 PID 已存在，立即生成新候选值并重新检查，直到找到一个未被占用的值。并且开头使用了`static_assert(MAX_PID > MAX_PROCESS)`，保证了 PID 的总空间大于系统允许的最大进程数，因此在逻辑上一定能找到一个空闲的 PID，不会出现死循环。
 ```c
 static int get_pid(void)
 {
