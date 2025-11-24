@@ -78,44 +78,80 @@ alloc_proc 函数的主要职责是为新进程创建一个进程控制块（PCB
 
 # 练习2：为新创建的内核线程分配资源（需要编码）
 ### 1.设计实现过程
-首先，调用 alloc_proc() 分配一个新的 proc_struct，如果分配失败则直接返回错误；接着，通过 setup_kstack(proc) 为子进程分配内核栈，如果失败则释放已分配的 proc_struct。然后，根据 clone_flags 调用 copy_mm() 将父进程的内存空间复制或共享给子进程，如果失败则释放内核栈和 proc_struct。接下来，copy_thread(proc, stack, tf) 设置子进程的陷入帧和内核上下文，使子进程可以从内核入口点开始执行。完成初始化后，通过 get_pid() 分配唯一的子进程 PID，再分别将进程插入哈希链表和全局 proc_list，同时更新系统中进程数量 nr_process。最后调用 wakeup_proc(proc) 将子进程状态设置为可运行，并将子进程的 PID 作为 do_fork 的返回值，确保调用者可以识别新创建的进程。对应的代码实现如下。
-```c
-    //调用 alloc_proc 来分配一个 proc_struct
-    proc=alloc_proc();
-    if(proc == NULL)
+- 设计思路：
+do_fork是创建线程的主要函数。其功能是创建一个新的子进程，它负责分配和初始化子进程所需的各种资源，包括内存和运行上下文，将子进程加入系统的调度管理，并最终使子进程进入可运行状态，如果在创建过程中出现问题，则会进行必要的清理并返回错误信息。
+
+- 具体实现步骤：
+  
+  - 分配进程控制块：
+调用`alloc_proc()`函数分配并初始化一个新的进程控制块（`proc_struct`）。如果分配失败则直接返回错误。
+  - 分配内核栈：
+调用`setup_kstack(proc)`申请数量为`KSTACKPAGE`（即内核栈占用的页数，为2）的物理页，如果分配成功，就将分配到的内核栈的虚拟地址保存到进程控制块的`kstack`成员中并返回成功，否则返回内存不足的错误码。
+  - 内存空间复制或共享：
+调用`copy_mm(clone_flags,proc)`根据`clone_flags`将父进程的内存空间复制或共享给子进程，如果失败则释放内核栈和proc_struct。
+  - 设置进程的中断帧和上下文：
+调用`copy_thread(proc,stack,tf)`函数为新创建的进程初始化内核栈上的运行上下文，其中传入的参数`tf`是指向构造的新进程的中断帧的指针。`copy_thread`函数在新进程的内核栈顶为一个`trapframe`预留空间，并将传入的`tf`复制到这里，然后将`tf`中的寄存器 `a0` 设为 0，接着根据传入的栈指针设置`tf`中的栈顶`sp`；最后设置上下文结构`context`，将返回地址`ra`指向`forkret`，栈指针`sp`指向`trapframe`，以便在调度切换时，子进程可以从`forkret`开始执行，并正确使用内核栈。
+  - 调用`get_pid()`分配唯一的子进程PID并赋值给进程控制块的`pid`成员。
+  - 将进程插入所有进程控制块的哈希表`hash_list`和所有进程控制块的双向线性列表`proc_list`
+  - 更新系统中进程数量`nr_process`
+  - 将新建的进程设为就绪态：
+调用`wakeup_proc(proc)`将新进程的状态设置为`PROC_RUNNABLE`，使其可以被调度器选中。
+  - 将新进程的pid设为`do_fork`函数返回值
+- 代码实现
+    ```c
+    int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     {
-        goto fork_out; 
+        int ret = -E_NO_FREE_PROC;
+        struct proc_struct *proc;
+        if (nr_process >= MAX_PROCESS)
+        {
+            goto fork_out;
+        }
+        ret = -E_NO_MEM;
+        //调用 alloc_proc 来分配一个 proc_struct
+        proc=alloc_proc();
+        if(proc == NULL)
+        {
+            goto fork_out; 
+        }
+        //调用 setup_kstack 来为子进程分配一个内核栈
+        int  setup_ret=setup_kstack(proc);
+        if(setup_ret!=0)
+        {
+            goto bad_fork_cleanup_proc;//分配内核栈失败时需要释放proc
+        }
+        //调用 copy_mm 根据 clone_flag 复制或共享 mm
+        int copy_ret=copy_mm(clone_flags,proc);
+        if(copy_ret!=0)
+        {
+            goto bad_fork_cleanup_kstack;//释放proc和kstack
+        }
+        //调用 copy_thread 在 proc_struct 中设置 tf 和 context
+        copy_thread(proc,stack,tf);
+        //将 proc_struct 插入 hash_list 和 proc_list
+        proc->pid=get_pid();//获取子进程 pid
+        hash_proc(proc);//插入hash_list
+        list_add(&proc_list,&(proc->list_link));//插入proc_list
+        nr_process++;
+        //调用 wakeup_proc 使新的子进程进入 RUNNABLE 状态
+        wakeup_proc(proc);
+        //使用子进程的 pid 设置返回值
+        ret=proc->pid;
+    fork_out:
+        return ret;
+    bad_fork_cleanup_kstack:
+        put_kstack(proc); // 释放内核栈
+    bad_fork_cleanup_proc:
+        kfree(proc);      // 释放 proc 结构体
+        goto fork_out;
     }
-    //调用 setup_kstack 来为子进程分配一个内核栈
-    int  setup_ret=setup_kstack(proc);
-    if(setup_ret!=0)
-    {
-        goto bad_fork_cleanup_proc;//分配内核栈失败时需要释放proc
-    }
-    //调用 copy_mm 根据 clone_flag 复制或共享 mm
-    int copy_ret=copy_mm(clone_flags,proc);
-    if(copy_ret!=0)
-    {
-        goto bad_fork_cleanup_kstack;//释放proc和kstack
-    }
-    //调用 copy_thread 在 proc_struct 中设置 tf 和 context
-    copy_thread(proc,stack,tf);
-    //将 proc_struct 插入 hash_list 和 proc_list
-    proc->pid=get_pid();//获取子进程 pid
-    hash_proc(proc);//插入hash_list
-    list_add(&proc_list,&(proc->list_link));//插入proc_list
-    nr_process++;
-    //调用 wakeup_proc 使新的子进程进入 RUNNABLE 状态
-    wakeup_proc(proc);
-    //使用子进程的 pid 设置返回值
-    ret=proc->pid;
-```
+    ```
 ### 2.请说明ucore是否做到给每个新fork的线程一个唯一的id？请说明你的分析和理由。
 可以做到，分析和理由如下:
 
 `get_pid()`代码的功能是为系统分配一个唯一的进程标识符 PID。函数内部首先通过静态断言确保支持的最大PID（`MAX_PID`）大于系统能够同时存在的最大进程数（`MAX_PROCESS`），保证 PID 空间足够使用。接着，定义了两个静态变量`last_pid`和`next_safe`，分别记录上一次分配的PID以及下一个安全的PID上限，这两个变量均在第一次调用该函数时初始化为`MAX_PID`。
 
-每次调用函数时，last_pid会先自增一位，如果超过最大 PID，就从1开始重新循环，并进入inside处执行关键的while循环。这个while循环通过遍历`proc_list`链表，逐一比对`last_pid`与已有进程的 PID，如果发现冲突，说明该 PID 已经被占用。算法会将`last_pid`加 1（如果加1后超过`next_safe`或`MAX_PID`，就重置`next_safe`,超过`MAX_PID`时还需要将`last_pid`置1），并跳转回 repeat 标签重新执行while循环开始整个链表的扫描。这确保了只要有冲突，就不会返回当前的`last_pid`。同时在遍历链表时，如果发现某个进程的 PID 大于当前的`last_pid`，代码会记录下这些大于`last_pid`的 PID 中最小的一个，赋值给`next_safe`。这意味着在 last_pid 到 next_safe 之间的这段整数区间内（不包含边界值），没有任何已存在的进程 PID。因此，下一次调用`get_pid`时，只要`++last_pid < next_safe`，就可以直接返回`last_pid`，而无需再次遍历整个链表。这在保证唯一性的同时提高了分配效率。
+每次调用函数时，last_pid会先自增一位，如果超过最大 PID，就从1开始重新循环，并进入inside处执行关键的while循环。这个while循环通过遍历`proc_list`链表，逐一比对`last_pid`与已有进程的 PID，如果发现冲突，说明该 PID 已经被占用。算法会将`last_pid`加 1（如果加1后超过`next_safe`或达到`MAX_PID`，就将`last_pid`置1并重置`next_safe`），并跳转回 repeat 标签重新执行while循环开始整个链表的扫描。这确保了只要有冲突，就不会返回当前的`last_pid`。同时在遍历链表时，如果发现某个进程的 PID 大于当前的`last_pid`，代码会记录下这些大于`last_pid`的 PID 中最小的一个，赋值给`next_safe`。这意味着在 last_pid 到 next_safe 之间的这段整数区间内（不包含边界值），没有任何已存在的进程 PID。因此，下一次调用`get_pid`时，只要`++last_pid < next_safe`，就可以直接返回`last_pid`，而无需再次遍历整个链表。这在保证唯一性的同时提高了分配效率。
 
 由此可以分析出，ucore可以做到给每个新fork的线程一个唯一的id。理由在于算法会维护一个静态变量`next_safe`，记录当前已分配 PID 的安全上限。对于候选 PID 小于`next_safe`的情况，算法直接分配，不需要遍历整个进程列表；而候选 PID ≥ next_safe分配 PID 时，算法遍历当前所有进程的列表，一旦发现候选 PID 已存在，立即生成新候选值并重新检查，直到找到一个未被占用的值。并且开头使用了`static_assert(MAX_PID > MAX_PROCESS)`，保证了 PID 的总空间大于系统允许的最大进程数，因此在逻辑上一定能找到一个空闲的 PID，不会出现死循环。
 ```c
